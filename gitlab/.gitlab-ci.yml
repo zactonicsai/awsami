@@ -1,0 +1,30 @@
+# =============================================================================
+# .gitlab-ci.yml — root pipeline, identical file on BOTH GitLab instances.
+# Instance awareness via CI_SERVER_HOST vs PRIMARY_GITLAB_HOST (an
+# instance-level CI variable set to the SAME value on both instances).
+# Writer instance: full pipelines. Mirror: nothing unless RUN_ON_MIRROR=true
+# (DR drills). See docs/05-GITLAB-DUAL-SYNC.md.
+# =============================================================================
+
+workflow:
+  rules:
+    - if: '$CI_SERVER_HOST == $PRIMARY_GITLAB_HOST'
+    - if: '$CI_SERVER_HOST != $PRIMARY_GITLAB_HOST && $RUN_ON_MIRROR == "true"'
+      when: always
+    - when: never
+
+stages:
+  - lint
+  - validate
+  - plan
+  - build
+  - deploy
+
+include:
+  - local: gitlab/ci/terraform.gitlab-ci.yml
+  - local: gitlab/ci/packer.gitlab-ci.yml
+  - local: gitlab/ci/ansible.gitlab-ci.yml
+  - local: gitlab/ci/cloudformation.gitlab-ci.yml
+
+# In the real multi-repo layout each repo carries only its own include +
+# this same workflow block. Kept together here so the toolkit is one bundle.

@@ -1,0 +1,56 @@
+---
+- name: PostgreSQL server packages (AL2023 native)
+  ansible.builtin.dnf:
+    name:
+      - "postgresql{{ postgres_version }}-server"
+      - "postgresql{{ postgres_version }}"
+    state: present
+
+- name: Custom data dir on /data
+  ansible.builtin.file:
+    path: "{{ postgres_data_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+
+- name: systemd override for PGDATA
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/postgresql.service.d/override.conf
+    content: |
+      [Service]
+      Environment=PGDATA={{ postgres_data_dir }}
+  notify: restart postgres
+
+- name: initdb (first run only)
+  ansible.builtin.command:
+    cmd: postgresql-setup --initdb
+    creates: "{{ postgres_data_dir }}/PG_VERSION"
+  environment:
+    PGSETUP_INITDB_OPTIONS: "--pgdata={{ postgres_data_dir }}"
+
+- name: postgresql.conf essentials
+  ansible.builtin.blockinfile:
+    path: "{{ postgres_data_dir }}/postgresql.conf"
+    marker: "# {mark} ANSIBLE dataapps"
+    block: |
+      listen_addresses = '{{ postgres_listen_addresses }}'
+      max_connections = {{ postgres_max_connections }}
+      shared_buffers = {{ postgres_shared_buffers_mb }}MB
+      password_encryption = scram-sha-256
+  notify: restart postgres
+
+- name: pg_hba — scram for app CIDR (NEVER 'trust' beyond localhost)
+  ansible.builtin.blockinfile:
+    path: "{{ postgres_data_dir }}/pg_hba.conf"
+    marker: "# {mark} ANSIBLE dataapps"
+    block: |
+      host  all  all  {{ postgres_allowed_cidr }}  scram-sha-256
+  notify: restart postgres
+
+- name: enabled + started
+  ansible.builtin.systemd_service:
+    name: postgresql
+    state: started
+    enabled: true
+    daemon_reload: true

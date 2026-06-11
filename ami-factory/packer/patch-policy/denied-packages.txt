@@ -1,0 +1,7 @@
+# Packages that must NOT exist on any DataApps image.
+# One package name per line. Build FAILS if any remain after removal.
+# Examples (edit to your org's real deny list):
+telnet
+rsh
+ypbind
+tcpdump

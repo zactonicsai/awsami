@@ -1,0 +1,9 @@
+---
+common_packages:
+  - jq
+  - tar
+  - unzip
+  - git
+  - chrony
+  - python3
+common_nofile_limit: 65536

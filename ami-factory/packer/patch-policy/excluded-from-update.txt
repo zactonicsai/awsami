@@ -1,0 +1,5 @@
+# Glob patterns appended to excludepkgs= in /etc/dnf/dnf.conf on the image.
+# These packages will be SKIPPED by any future 'dnf update' on instances.
+# Use for "approved version only until re-certified" software, e.g.:
+# kernel*
+# java-*-amazon-corretto*

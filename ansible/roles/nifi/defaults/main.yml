@@ -1,0 +1,11 @@
+---
+# NiFi 2.x requires Java 21.
+nifi_version: "2.4.0"
+nifi_mirror: "https://archive.apache.org/dist/nifi"
+nifi_user: nifi
+nifi_install_dir: /opt
+nifi_https_port: 8443
+nifi_heap: "2g"
+# Override via vault / SSM lookup — never commit real creds:
+nifi_admin_user: admin
+nifi_admin_password: "CHANGE-ME-via-vault-or-ssm"

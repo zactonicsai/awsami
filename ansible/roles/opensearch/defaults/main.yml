@@ -1,0 +1,11 @@
+---
+opensearch_version: "3.0.0"
+opensearch_user: opensearch
+opensearch_data_dir: /data/opensearch
+opensearch_http_port: 9200
+# Heap: 50% of RAM, never above ~32g (compressed oops limit)
+opensearch_heap_gb: "{{ [(ansible_memtotal_mb // 2048), 31] | min | string }}"
+opensearch_cluster_name: dataapps
+# Initial admin password REQUIRED by installer (2.12+); strong & vaulted:
+opensearch_initial_admin_password: "CHANGE-ME-Strong-Passw0rd!"
+opensearch_rpm_url: "https://artifacts.opensearch.org/releases/bundle/opensearch/{{ opensearch_version }}/opensearch-{{ opensearch_version }}-linux-x64.rpm"

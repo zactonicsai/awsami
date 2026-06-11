@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  DataApps AMI factory via EC2 Image Builder (managed alternative to Packer).
+  Builds from the LATEST Amazon Linux 2023 managed image, applies the same
+  baseline + approved-patch policy as the Packer path, distributes with tags,
+  and runs on a schedule that only triggers when the upstream base changed.
+  Deploy: aws cloudformation deploy --template-file imagebuilder-pipeline.yaml
+          --stack-name dataapps-ami-factory --capabilities CAPABILITY_NAMED_IAM
+
+Parameters:
+  AmiFamily:
+    Type: String
+    Default: al2023-base
+  InstanceType:
+    Type: String
+    Default: t3.large
+  ScheduleCron:
+    Type: String
+    Default: cron(0 6 ? * MON *)   # weekly Monday 06:00 UTC
+  DeniedPackages:
+    Type: String
+    Default: "telnet rsh ypbind tcpdump"
+    Description: Space-separated package names that must NOT exist (fail-closed)
+  ExcludeFromUpdates:
+    Type: String
+    Default: ""
+    Description: Space-separated glob patterns appended to dnf excludepkgs (optional)
+
+Resources:
+
+  # ---------------------------------------------------------------------------
+  # IAM for the build instance: SSM + ImageBuilder managed policies
+  # ---------------------------------------------------------------------------
+  BuildInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AmiFamily}-imagebuilder-instance"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder
+
+  BuildInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${AmiFamily}-imagebuilder-instance"
+      Roles: [!Ref BuildInstanceRole]
+
+  # ---------------------------------------------------------------------------
+  # Build component: same logic as packer/scripts 00→02 (inline AWSTOE doc)
+  # ---------------------------------------------------------------------------
+  BaselinePatchComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub "${AmiFamily}-baseline-patch-policy"
+      Platform: Linux
+      Version: "1.0.0"            # bump on every change (immutable versions)
+      Description: OS update + agents + hardening + approved-patch policy (fail-closed)
+      Data: !Sub |
+        name: dataapps-baseline-patch-policy
+        description: Mirrors packer/scripts 00-os-update,01-baseline,02-patch-policy
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: OsUpdate
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -euxo pipefail
+                    - dnf -y clean all
+                    - dnf -y update
+              - name: Baseline
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -euxo pipefail
+                    - dnf -y install amazon-cloudwatch-agent jq tar unzip git chrony python3 python3-pip
+                    - systemctl enable amazon-ssm-agent chronyd
+                    - sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+                    - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+                    - printf '*  soft  nofile  65536\n*  hard  nofile  65536\n' > /etc/security/limits.d/90-dataapps.conf
+              - name: PatchPolicy
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -euxo pipefail
+                    - |
+                      DENIED="${DeniedPackages}"
+                      if [ -n "$DENIED" ]; then
+                        dnf -y remove $DENIED || true
+                        FAILED=0
+                        for p in $DENIED; do
+                          rpm -q "$p" >/dev/null 2>&1 && { echo "POLICY VIOLATION: $p still installed" >&2; FAILED=1; }
+                        done
+                        [ "$FAILED" -eq 0 ] || { echo "FATAL: denied packages remain — failing build"; exit 1; }
+                      fi
+                    - |
+                      EXCL="${ExcludeFromUpdates} ${DeniedPackages}"
+                      EXCL=$(echo $EXCL | xargs)
+                      if [ -n "$EXCL" ]; then
+                        if grep -q '^excludepkgs=' /etc/dnf/dnf.conf; then
+                          sed -i "s|^excludepkgs=.*|excludepkgs=$EXCL|" /etc/dnf/dnf.conf
+                        else
+                          echo "excludepkgs=$EXCL" >> /etc/dnf/dnf.conf
+                        fi
+                      fi
+                    - rpm -qa | sort > /var/lib/dataapps-ami-pkglist.txt
+          - name: validate
+            steps:
+              - name: VerifyDeniedAbsent
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -e
+                      for p in ${DeniedPackages}; do
+                        if rpm -q "$p" >/dev/null 2>&1; then echo "VALIDATE FAIL: $p present"; exit 1; fi
+                      done
+                      echo "validate OK"
+
+  # ---------------------------------------------------------------------------
+  # Recipe: parent = AWS-managed "latest AL2023 x86" image (x.x.x = latest)
+  # ---------------------------------------------------------------------------
+  Recipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: !Sub "${AmiFamily}-recipe"
+      Version: "1.0.0"
+      ParentImage: !Sub "arn:aws:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-x86/x.x.x"
+      Components:
+        - ComponentArn: !Sub "arn:aws:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x"
+        - ComponentArn: !Ref BaselinePatchComponent
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 16
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      AdditionalInstanceConfiguration:
+        SystemsManagerAgent: { UninstallAfterBuild: false }
+
+  Infrastructure:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: !Sub "${AmiFamily}-infra"
+      InstanceProfileName: !Ref BuildInstanceProfile
+      InstanceTypes: [!Ref InstanceType]
+      TerminateInstanceOnFailure: true
+      InstanceMetadataOptions:
+        HttpTokens: required          # IMDSv2 on the build instance
+        HttpPutResponseHopLimit: 2
+      ResourceTags: { Project: dataapps, ManagedBy: imagebuilder }
+
+  Distribution:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: !Sub "${AmiFamily}-dist"
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: !Sub "${AmiFamily}-{{ imagebuilder:buildDate }}"
+            AmiTags:
+              Name: !Sub "${AmiFamily}-{{ imagebuilder:buildDate }}"
+              AmiFamily: !Ref AmiFamily
+              Project: dataapps
+              ManagedBy: imagebuilder
+            # LaunchPermissionConfiguration / TargetAccountIds here for multi-account sharing
+
+  Pipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: !Sub "${AmiFamily}-pipeline"
+      ImageRecipeArn: !Ref Recipe
+      InfrastructureConfigurationArn: !Ref Infrastructure
+      DistributionConfigurationArn: !Ref Distribution
+      Status: ENABLED
+      EnhancedImageMetadataEnabled: true
+      ImageTestsConfiguration: { ImageTestsEnabled: true, TimeoutMinutes: 90 }
+      Schedule:
+        ScheduleExpression: !Ref ScheduleCron
+        # Only build when the AL2023 parent or a component actually changed:
+        PipelineExecutionStartCondition: EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE
+      ImageScanningConfiguration: { ImageScanningEnabled: true }  # Inspector scan of build instance
+
+Outputs:
+  PipelineArn:
+    Value: !Ref Pipeline
+  ComponentArn:
+    Value: !Ref BaselinePatchComponent
+  Note:
+    Value: >
+      After each successful build, publish the new AMI id to the SSM pointer
+      /dataapps/ami/<family>/latest (EventBridge rule on "EC2 Image Builder
+      Image State Change" status AVAILABLE -> small Lambda or SSM Automation;
+      manual fallback: scripts\windows\publish-latest-ami.bat).

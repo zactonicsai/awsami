@@ -1,0 +1,21 @@
+---
+# Dynamic inventory: EC2 tags ARE the inventory. Tag App=kafka => group app_kafka.
+# Requires: pip install boto3 botocore ; AWS creds in env/profile.
+plugin: amazon.aws.aws_ec2
+regions:
+  - us-east-1
+filters:
+  tag:Project: dataapps
+  tag:Environment: dev
+  instance-state-name: running
+keyed_groups:
+  - key: tags.App
+    prefix: app          # -> app_kafka, app_zookeeper, app_nifi, ...
+    separator: "_"
+  - key: tags.Environment
+    prefix: env
+hostnames:
+  - tag:Name
+  - private-ip-address
+compose:
+  ansible_host: private_ip_address

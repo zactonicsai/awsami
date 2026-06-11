@@ -1,0 +1,13 @@
+[
+  "EnvName=dev",
+  "AppName=kafka",
+  "VpcId=vpc-REPLACE",
+  "SubnetIds=subnet-REPLACEa,subnet-REPLACEb,subnet-REPLACEc",
+  "AmiId=/dataapps/ami/al2023-base/latest",
+  "InstanceType=m6i.large",
+  "NodeCount=3",
+  "ClientCidr=10.0.0.0/8",
+  "AppPortFrom=9092",
+  "AppPortTo=9094",
+  "DataVolumeGb=200"
+]

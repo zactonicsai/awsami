@@ -1,0 +1,108 @@
+# =============================================================================
+# ci/terraform.gitlab-ci.yml — Terraform pipeline (own jobs).
+# WHY own jobs: GitLab 18.0 REMOVED the bundled Terraform CI/CD templates
+# (HashiCorp BUSL fallout). Options now = write your own (this file) or use
+# the GitLab OpenTofu CI/CD component (commented at the bottom).
+#
+# AUTH: keyless via GitLab OIDC -> AWS AssumeRoleWithWebIdentity.
+# Per-instance CI variables (NOT synced between GitLab A and B):
+#   AWS_ROLE_ARN          role trusting THIS instance's OIDC provider
+#   AWS_DEFAULT_REGION
+# One IAM OIDC identity provider must exist per GitLab instance (issuer URL
+# differs), each with its own role trust policy keyed on aud + sub claims.
+# =============================================================================
+
+.aws_oidc:
+  id_tokens:
+    GITLAB_OIDC_TOKEN:
+      aud: https://gitlab.example.com   # set to YOUR instance URL; must match IAM provider audience
+  before_script:
+    - mkdir -p "$CI_PROJECT_DIR/.aws"
+    - echo "$GITLAB_OIDC_TOKEN" > "$CI_PROJECT_DIR/.aws/web_identity_token"
+    # AWS SDKs/CLI pick these three up natively — no aws sts call needed:
+    - export AWS_WEB_IDENTITY_TOKEN_FILE="$CI_PROJECT_DIR/.aws/web_identity_token"
+    - export AWS_ROLE_ARN="$AWS_ROLE_ARN"
+    - export AWS_ROLE_SESSION_NAME="gl-$CI_PROJECT_ID-$CI_PIPELINE_ID"
+
+.tf_base:
+  extends: .aws_oidc
+  image:
+    name: hashicorp/terraform:1.15    # pin minor; bump deliberately
+    entrypoint: [""]
+  variables:
+    TF_IN_AUTOMATION: "true"
+    TF_INPUT: "false"
+    TF_DIR: terraform/environments/dev
+  before_script:
+    - !reference [.aws_oidc, before_script]
+    - cd "$TF_DIR"
+    - terraform init
+
+tf:fmt:
+  extends: .tf_base
+  stage: lint
+  script:
+    - terraform fmt -check -recursive ../..
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+tf:validate:
+  extends: .tf_base
+  stage: validate
+  script:
+    - terraform validate
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+tf:sec:
+  stage: validate
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  script:
+    - trivy config --exit-code 1 --severity HIGH,CRITICAL terraform/
+  allow_failure: true   # start advisory; flip to blocking once findings are triaged
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+tf:plan:
+  extends: .tf_base
+  stage: plan
+  script:
+    - terraform plan -out=tfplan.bin
+    - terraform show -no-color tfplan.bin > tfplan.txt   # human-readable for MR review
+  artifacts:
+    paths:
+      - $TF_DIR/tfplan.bin
+      - $TF_DIR/tfplan.txt
+    expire_in: 7 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+tf:apply:
+  extends: .tf_base
+  stage: deploy
+  script:
+    # Apply EXACTLY the reviewed plan artifact — never re-plan inside apply
+    - terraform apply tfplan.bin
+  dependencies: [ "tf:plan" ]
+  when: manual                          # human gate
+  environment:
+    name: dev
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  # Protect: run only on protected branch + protected runner; approvals via
+  # environment "deployment approvals" if your tier has it.
+
+# -----------------------------------------------------------------------------
+# ALTERNATIVE: GitLab's official OpenTofu component (drop-in if you adopt tofu):
+#
+# include:
+#   - component: gitlab.example.com/components/opentofu/full-pipeline@<version>
+#     inputs:
+#       opentofu_version: 1.10.0
+#       root_dir: terraform/environments/dev
+# stages: [validate, test, build, deploy, cleanup]
+#
+# Same OIDC variables apply. Keep state in S3 either way (two-instance rule).
+# -----------------------------------------------------------------------------

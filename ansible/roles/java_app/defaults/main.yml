@@ -1,0 +1,14 @@
+---
+# Generic deployer for in-house Java services. Per-app values come from
+# group_vars of the app_javaapp_<name> group:
+java_app_name: myservice
+java_app_version: "1.0.0"
+java_app_s3_bucket: REPLACE-dataapps-artifacts
+java_app_s3_key: "{{ java_app_name }}/{{ java_app_name }}-{{ java_app_version }}.jar"
+java_app_user: appsvc
+java_app_home: "/opt/{{ java_app_name }}"
+java_app_port: 8080
+java_app_opts: "-Xms512m -Xmx1g"
+java_app_env: {}            # extra KEY: value pairs -> /etc/sysconfig/<app>
+# SQLite note: apps using embedded SQLite keep their .db under {{ java_app_home }}/data
+# (or /data) — include that path in EBS snapshot/backup plans; no server to manage.

@@ -1,0 +1,65 @@
+---
+- name: Java 21 (Corretto) — required by NiFi 2.x
+  ansible.builtin.dnf:
+    name: java-21-amazon-corretto-headless
+    state: present
+
+- name: nifi user
+  ansible.builtin.user:
+    name: "{{ nifi_user }}"
+    system: true
+    shell: /sbin/nologin
+
+- name: Download & unpack NiFi
+  ansible.builtin.unarchive:
+    src: "{{ nifi_mirror }}/{{ nifi_version }}/nifi-{{ nifi_version }}-bin.zip"
+    dest: "{{ nifi_install_dir }}"
+    remote_src: true
+    creates: "{{ nifi_install_dir }}/nifi-{{ nifi_version }}"
+    owner: "{{ nifi_user }}"
+
+- name: Symlink /opt/nifi
+  ansible.builtin.file:
+    src: "{{ nifi_install_dir }}/nifi-{{ nifi_version }}"
+    dest: /opt/nifi
+    state: link
+
+- name: Heap settings
+  ansible.builtin.lineinfile:
+    path: /opt/nifi/conf/bootstrap.conf
+    regexp: "^java.arg.{{ item.n }}="
+    line: "java.arg.{{ item.n }}=-Xm{{ item.t }}{{ nifi_heap }}"
+  loop:
+    - { n: 2, t: "s" }
+    - { n: 3, t: "x" }
+  notify: restart nifi
+
+- name: Single-user credentials (idempotence marker)
+  ansible.builtin.command:
+    cmd: /opt/nifi/bin/nifi.sh set-single-user-credentials {{ nifi_admin_user }} {{ nifi_admin_password }}
+    creates: /opt/nifi/conf/.creds-set
+  become_user: "{{ nifi_user }}"
+  become: true
+  register: nifi_creds
+  no_log: true
+
+- name: Creds marker
+  ansible.builtin.file:
+    path: /opt/nifi/conf/.creds-set
+    state: touch
+    modification_time: preserve
+    access_time: preserve
+  when: nifi_creds is changed
+
+- name: systemd unit
+  ansible.builtin.template:
+    src: nifi.service.j2
+    dest: /etc/systemd/system/nifi.service
+  notify: restart nifi
+
+- name: enabled + started
+  ansible.builtin.systemd_service:
+    name: nifi
+    state: started
+    enabled: true
+    daemon_reload: true

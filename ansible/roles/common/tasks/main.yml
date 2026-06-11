@@ -1,0 +1,42 @@
+---
+# AL2023: package manager is dnf; ansible.builtin.dnf is the right module.
+- name: Baseline packages present
+  ansible.builtin.dnf:
+    name: "{{ common_packages }}"
+    state: present
+
+- name: Timezone
+  community.general.timezone:
+    name: "{{ dataapps_timezone | default('UTC') }}"
+
+- name: chrony running (Amazon Time Sync)
+  ansible.builtin.service:
+    name: chronyd
+    state: started
+    enabled: true
+
+- name: File limits for data apps
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/90-dataapps.conf
+    mode: "0644"
+    content: |
+      *  soft  nofile  {{ common_nofile_limit }}
+      *  hard  nofile  {{ common_nofile_limit }}
+
+- name: Format & mount data volume when present (apps expect /data)
+  when: ansible_devices.nvme1n1 is defined or ansible_devices.xvdb is defined
+  block:
+    - name: Resolve data device name (nitro = nvme1n1)
+      ansible.builtin.set_fact:
+        data_device: "{{ '/dev/nvme1n1' if ansible_devices.nvme1n1 is defined else '/dev/xvdb' }}"
+    - name: Filesystem on data device
+      community.general.filesystem:
+        fstype: xfs
+        dev: "{{ data_device }}"
+    - name: Mount /data
+      ansible.posix.mount:
+        path: /data
+        src: "{{ data_device }}"
+        fstype: xfs
+        opts: defaults,noatime
+        state: mounted

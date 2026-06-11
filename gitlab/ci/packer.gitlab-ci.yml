@@ -1,0 +1,39 @@
+# =============================================================================
+# ci/packer.gitlab-ci.yml — validate always; build on schedule/manual.
+# =============================================================================
+
+pkr:validate:
+  extends: .aws_oidc
+  stage: validate
+  image:
+    name: hashicorp/packer:1.12
+    entrypoint: [""]
+  script:
+    - cd ami-factory/packer
+    - packer init .
+    - packer validate -var-file=dev.pkrvars.hcl.example .
+  rules:
+    - changes: [ "ami-factory/**/*" ]
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+
+pkr:build:
+  extends: .aws_oidc
+  stage: build
+  image:
+    name: hashicorp/packer:1.12
+    entrypoint: [""]
+  script:
+    - cd ami-factory/packer
+    - packer init .
+    - packer build -var-file=dev.pkrvars.hcl .   # real varfile from CI file-variable or repo
+    - cat packer-manifest.json
+  artifacts:
+    paths: [ ami-factory/packer/packer-manifest.json ]
+    expire_in: 90 days          # audit trail of what was built from what base
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'    # e.g. weekly rebuild on fresh AL2023
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+  # Publish step (pointer update) stays MANUAL or event-driven after bake tests:
+  # aws ssm put-parameter --name /dataapps/ami/al2023-base/latest --type String \
+  #   --value "$(jq -r '.builds[-1].artifact_id' packer-manifest.json | cut -d: -f2)" --overwrite

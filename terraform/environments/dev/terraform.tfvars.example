@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored by convention
+# when it contains environment-specific ids; commit it only if your repo IS the env record.
+region             = "us-east-1"
+environment        = "dev"
+vpc_id             = "vpc-0123456789abcdef0"
+private_subnet_ids = ["subnet-aaa", "subnet-bbb", "subnet-ccc"]
+client_cidr_blocks = ["10.0.0.0/8"]

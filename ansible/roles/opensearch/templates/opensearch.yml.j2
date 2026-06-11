@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+cluster.name: {{ opensearch_cluster_name }}
+node.name: {{ inventory_hostname }}
+path.data: {{ opensearch_data_dir }}
+network.host: 0.0.0.0
+http.port: {{ opensearch_http_port }}
+discovery.seed_hosts:
+{% for h in groups['app_opensearch'] %}
+  - {{ hostvars[h].ansible_host | default(h) }}
+{% endfor %}
+cluster.initial_cluster_manager_nodes:
+{% for h in groups['app_opensearch'] %}
+  - {{ h }}
+{% endfor %}

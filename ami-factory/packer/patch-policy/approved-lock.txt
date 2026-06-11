@@ -1,0 +1,4 @@
+# Approved exact versions to pin (dnf versionlock), one NVR(.arch) per line:
+#   name-version-release.arch     e.g.  openssl-3.2.2-1.amzn2023.0.1.x86_64
+# Leave empty to pin nothing. Lines here are installed if missing, then locked.
+# openssl-3.2.2-1.amzn2023.0.1.x86_64

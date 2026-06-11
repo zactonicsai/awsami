@@ -1,0 +1,21 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Apache Kafka ({{ kafka_mode }})
+{% if kafka_mode == "zookeeper" %}
+After=network-online.target zookeeper.service
+{% else %}
+After=network-online.target
+{% endif %}
+
+[Service]
+Type=simple
+User={{ kafka_user }}
+Environment="KAFKA_HEAP_OPTS={{ kafka_heap }}"
+ExecStart=/opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/server.properties
+ExecStop=/opt/kafka/bin/kafka-server-stop.sh
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=100000
+
+[Install]
+WantedBy=multi-user.target

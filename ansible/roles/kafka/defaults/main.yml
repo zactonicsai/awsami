@@ -1,0 +1,31 @@
+---
+# Kafka 3.9.x = LAST line that still supports ZooKeeper mode.
+# Kafka 4.x is KRaft-ONLY (ZooKeeper removed). Stay on 3.9 until ZK->KRaft
+# migration is complete, then flip kafka_mode to "kraft" / move to 4.x.
+kafka_version: "3.9.1"
+kafka_scala: "2.13"
+kafka_mirror: "https://archive.apache.org/dist/kafka"
+kafka_mode: "kraft"                  # "kraft" | "zookeeper"
+kafka_user: kafka
+kafka_install_dir: /opt
+kafka_data_dir: /data/kafka
+kafka_heap: "-Xms2g -Xmx2g"
+kafka_listener_port: 9092
+kafka_controller_port: 9093
+
+# KRaft: combined broker+controller on every node (fine for small clusters);
+# cluster id generated ONCE per cluster, then pinned in group_vars.
+kafka_kraft_cluster_id: "REPLACE-with-kafka-storage-random-uuid"
+kafka_controller_quorum: >-
+  {%- for h in groups['app_kafka'] -%}
+  {{ loop.index }}@{{ hostvars[h].ansible_host | default(h) }}:{{ kafka_controller_port }}{{ "," if not loop.last }}
+  {%- endfor -%}
+kafka_node_id: "{{ groups['app_kafka'].index(inventory_hostname) + 1 }}"
+
+# ZooKeeper mode settings (used only when kafka_mode == "zookeeper")
+kafka_zookeeper_connect: >-
+  {%- for h in groups['app_zookeeper'] | default([]) -%}
+  {{ hostvars[h].ansible_host | default(h) }}:2181{{ "," if not loop.last }}
+  {%- endfor -%}
+
+kafka_server_properties_extra: {}    # dict of extra key:value lines

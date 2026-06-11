@@ -1,0 +1,68 @@
+---
+- name: Java present (Corretto)
+  ansible.builtin.dnf:
+    name: "java-{{ java_corretto_version | default('21') }}-amazon-corretto-headless"
+    state: present
+
+- name: kafka user
+  ansible.builtin.user:
+    name: "{{ kafka_user }}"
+    system: true
+    shell: /sbin/nologin
+
+- name: Download & unpack Kafka {{ kafka_version }}
+  ansible.builtin.unarchive:
+    src: "{{ kafka_mirror }}/{{ kafka_version }}/kafka_{{ kafka_scala }}-{{ kafka_version }}.tgz"
+    dest: "{{ kafka_install_dir }}"
+    remote_src: true
+    creates: "{{ kafka_install_dir }}/kafka_{{ kafka_scala }}-{{ kafka_version }}"
+
+- name: Stable path symlink /opt/kafka
+  ansible.builtin.file:
+    src: "{{ kafka_install_dir }}/kafka_{{ kafka_scala }}-{{ kafka_version }}"
+    dest: /opt/kafka
+    state: link
+
+- name: Data dir
+  ansible.builtin.file:
+    path: "{{ kafka_data_dir }}"
+    state: directory
+    owner: "{{ kafka_user }}"
+    mode: "0750"
+
+- name: server.properties
+  ansible.builtin.template:
+    src: server.properties.j2
+    dest: /opt/kafka/config/server.properties
+    owner: "{{ kafka_user }}"
+    mode: "0640"
+  notify: restart kafka
+
+- name: Format KRaft storage (first boot only — guarded by meta.properties)
+  when: kafka_mode == "kraft"
+  ansible.builtin.command:
+    cmd: >
+      /opt/kafka/bin/kafka-storage.sh format
+      -t {{ kafka_kraft_cluster_id }}
+      -c /opt/kafka/config/server.properties
+    creates: "{{ kafka_data_dir }}/meta.properties"
+  become_user: "{{ kafka_user }}"
+  become: true
+
+- name: systemd unit
+  ansible.builtin.template:
+    src: kafka.service.j2
+    dest: /etc/systemd/system/kafka.service
+  notify: restart kafka
+
+- name: enabled + started
+  ansible.builtin.systemd_service:
+    name: kafka
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for listener
+  ansible.builtin.wait_for:
+    port: "{{ kafka_listener_port }}"
+    timeout: 120

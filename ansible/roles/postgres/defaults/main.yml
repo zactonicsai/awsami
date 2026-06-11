@@ -1,0 +1,9 @@
+---
+# Default position: use RDS/Aurora. This role = the exception path where a
+# self-managed PG on EC2 is genuinely required.
+postgres_version: "16"        # AL2023 ships postgresql16/17 packages
+postgres_data_dir: /data/pgsql
+postgres_listen_addresses: "*"
+postgres_allowed_cidr: "10.0.0.0/8"
+postgres_max_connections: 200
+postgres_shared_buffers_mb: "{{ (ansible_memtotal_mb * 0.25) | int }}"

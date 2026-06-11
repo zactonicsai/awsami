@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+JAVA_OPTS="{{ java_app_opts }}"
+APP_PORT={{ java_app_port }}
+{% for k, v in java_app_env.items() %}
+{{ k }}={{ v }}
+{% endfor %}

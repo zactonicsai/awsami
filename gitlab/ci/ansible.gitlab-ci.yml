@@ -1,0 +1,40 @@
+# =============================================================================
+# ci/ansible.gitlab-ci.yml — lint on MRs; nightly --check drift report.
+# Control node container: python 3.12 (ansible-core 2.20 requirement).
+# =============================================================================
+
+.ansible_base:
+  extends: .aws_oidc
+  image: python:3.12-slim
+  before_script:
+    - !reference [.aws_oidc, before_script]
+    - pip install --quiet "ansible-core>=2.20,<2.21" ansible-lint boto3 botocore
+    - cd ansible
+    - ansible-galaxy collection install -r requirements.yml
+
+ans:lint:
+  extends: .ansible_base
+  stage: lint
+  script:
+    - ansible-lint playbooks/ roles/
+  rules:
+    - changes: [ "ansible/**/*" ]
+
+ans:drift:
+  extends: .ansible_base
+  stage: validate
+  script:
+    # Read-only convergence check: exit nonzero diff = config drift on hosts
+    - ansible-playbook playbooks/site.yml --check --diff
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'   # nightly
+  allow_failure: true   # report, don't block — humans review the drift
+
+ans:apply:
+  extends: .ansible_base
+  stage: deploy
+  script:
+    - ansible-playbook playbooks/site.yml
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

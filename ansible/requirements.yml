@@ -1,0 +1,12 @@
+---
+# ansible-galaxy collection install -r requirements.yml
+# Control node: ansible-core 2.20.x needs Python >= 3.12.
+collections:
+  - name: amazon.aws        # aws_ec2 inventory, ec2_* modules
+    version: ">=10.0.0,<11.0.0"
+  - name: community.aws     # aws_ssm connection plugin (Ansible over SSM)
+    version: ">=10.0.0,<11.0.0"
+  - name: community.general
+    version: ">=11.0.0,<12.0.0"
+  - name: ansible.posix
+    version: ">=2.0.0,<3.0.0"

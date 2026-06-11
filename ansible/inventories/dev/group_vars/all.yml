@@ -1,0 +1,18 @@
+---
+ansible_user: ec2-user
+
+# ---- Connection option A (default): SSH over private network/VPN -------------
+# Nothing extra needed; ansible_host=private_ip from inventory compose.
+
+# ---- Connection option B (recommended): Ansible over SSM — no SSH ingress ----
+# Uncomment all four; needs Session Manager plugin on control node, S3 bucket
+# for file transfer, and instances with AmazonSSMManagedInstanceCore (the
+# Terraform module / CFN template grant it already).
+# ansible_connection: community.aws.aws_ssm
+# ansible_aws_ssm_bucket_name: REPLACE-dataapps-ssm-transfer
+# ansible_aws_ssm_region: us-east-1
+# ansible_python_interpreter: /usr/bin/python3
+
+# Org defaults consumed by roles
+dataapps_timezone: UTC
+java_corretto_version: "21"

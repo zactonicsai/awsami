@@ -1,0 +1,50 @@
+---
+# Full convergence run:
+#   ansible-playbook playbooks/site.yml                       (everything)
+#   ansible-playbook playbooks/site.yml --limit app_kafka     (one app)
+#   ansible-playbook playbooks/site.yml --check --diff        (drift report)
+
+- name: Baseline every DataApps host
+  hosts: all
+  become: true
+  roles:
+    - common
+
+- name: ZooKeeper ensemble (only while running Kafka 3.x in ZK mode / other ZK users)
+  hosts: app_zookeeper
+  become: true
+  serial: 1                  # quorum members one at a time
+  roles:
+    - zookeeper
+
+- name: Kafka brokers
+  hosts: app_kafka
+  become: true
+  serial: 1                  # rolling — never restart all brokers at once
+  roles:
+    - kafka
+
+- name: NiFi
+  hosts: app_nifi
+  become: true
+  roles:
+    - nifi
+
+- name: OpenSearch
+  hosts: app_opensearch
+  become: true
+  serial: 1
+  roles:
+    - opensearch
+
+- name: PostgreSQL (self-managed EC2; prefer RDS where possible)
+  hosts: app_postgres
+  become: true
+  roles:
+    - postgres
+
+- name: Custom Java applications (any host tagged App=javaapp-*)
+  hosts: app_javaapp_*
+  become: true
+  roles:
+    - java_app

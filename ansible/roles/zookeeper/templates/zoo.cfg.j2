@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+tickTime=2000
+initLimit=10
+syncLimit=5
+dataDir={{ zookeeper_data_dir }}
+clientPort={{ zookeeper_client_port }}
+autopurge.snapRetainCount=5
+autopurge.purgeInterval=24
+4lw.commands.whitelist=stat,ruok,conf,isro
+{% for host in zookeeper_servers %}
+server.{{ loop.index }}={{ hostvars[host].ansible_host | default(host) }}:2888:3888
+{% endfor %}

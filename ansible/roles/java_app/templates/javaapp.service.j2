@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+[Unit]
+Description={{ java_app_name }} (DataApps Java service)
+After=network-online.target
+
+[Service]
+Type=simple
+User={{ java_app_user }}
+EnvironmentFile=/etc/sysconfig/{{ java_app_name }}
+WorkingDirectory={{ java_app_home }}
+ExecStart=/usr/bin/java $JAVA_OPTS -jar {{ java_app_home }}/current.jar
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

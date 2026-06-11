@@ -1,0 +1,56 @@
+---
+- name: Java present (Corretto)
+  ansible.builtin.dnf:
+    name: "java-{{ java_corretto_version | default('21') }}-amazon-corretto-headless"
+    state: present
+
+- name: Service user
+  ansible.builtin.user:
+    name: "{{ java_app_user }}"
+    system: true
+    shell: /sbin/nologin
+
+- name: App dirs
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ java_app_user }}"
+    mode: "0750"
+  loop:
+    - "{{ java_app_home }}"
+    - "{{ java_app_home }}/data"
+
+- name: Fetch artifact from S3 (instance role needs s3:GetObject on the bucket)
+  amazon.aws.s3_object:
+    bucket: "{{ java_app_s3_bucket }}"
+    object: "{{ java_app_s3_key }}"
+    dest: "{{ java_app_home }}/{{ java_app_name }}-{{ java_app_version }}.jar"
+    mode: get
+  notify: restart java app
+
+- name: Current symlink (atomic version switch)
+  ansible.builtin.file:
+    src: "{{ java_app_home }}/{{ java_app_name }}-{{ java_app_version }}.jar"
+    dest: "{{ java_app_home }}/current.jar"
+    state: link
+  notify: restart java app
+
+- name: Environment file
+  ansible.builtin.template:
+    src: sysconfig.j2
+    dest: "/etc/sysconfig/{{ java_app_name }}"
+    mode: "0640"
+  notify: restart java app
+
+- name: systemd unit
+  ansible.builtin.template:
+    src: javaapp.service.j2
+    dest: "/etc/systemd/system/{{ java_app_name }}.service"
+  notify: restart java app
+
+- name: enabled + started
+  ansible.builtin.systemd_service:
+    name: "{{ java_app_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true

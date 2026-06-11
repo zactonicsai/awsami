@@ -1,0 +1,10 @@
+---
+zookeeper_version: "3.9.3"
+zookeeper_mirror: "https://archive.apache.org/dist/zookeeper"
+zookeeper_user: zookeeper
+zookeeper_install_dir: /opt
+zookeeper_data_dir: /data/zookeeper
+zookeeper_client_port: 2181
+# myid derived from inventory order unless overridden in host_vars
+zookeeper_myid: "{{ groups['app_zookeeper'].index(inventory_hostname) + 1 }}"
+zookeeper_servers: "{{ groups['app_zookeeper'] }}"

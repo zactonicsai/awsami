@@ -1,0 +1,29 @@
+# {{ ansible_managed }} — mode: {{ kafka_mode }}
+{% if kafka_mode == "kraft" %}
+############################ KRaft (no ZooKeeper) ############################
+process.roles=broker,controller
+node.id={{ kafka_node_id }}
+controller.quorum.voters={{ kafka_controller_quorum }}
+listeners=PLAINTEXT://:{{ kafka_listener_port }},CONTROLLER://:{{ kafka_controller_port }}
+controller.listener.names=CONTROLLER
+inter.broker.listener.name=PLAINTEXT
+{% else %}
+######################## ZooKeeper mode (Kafka <= 3.9) ########################
+broker.id={{ kafka_node_id }}
+zookeeper.connect={{ kafka_zookeeper_connect }}
+listeners=PLAINTEXT://:{{ kafka_listener_port }}
+{% endif %}
+advertised.listeners=PLAINTEXT://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ kafka_listener_port }}
+listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+
+log.dirs={{ kafka_data_dir }}
+num.partitions=3
+default.replication.factor={{ [groups['app_kafka'] | length, 3] | min }}
+min.insync.replicas={{ [(groups['app_kafka'] | length) - 1, 1] | max if (groups['app_kafka'] | length) > 1 else 1 }}
+offsets.topic.replication.factor={{ [groups['app_kafka'] | length, 3] | min }}
+transaction.state.log.replication.factor={{ [groups['app_kafka'] | length, 3] | min }}
+log.retention.hours=168
+auto.create.topics.enable=false
+{% for k, v in kafka_server_properties_extra.items() %}
+{{ k }}={{ v }}
+{% endfor %}

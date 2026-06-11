@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Apache NiFi
+After=network-online.target
+
+[Service]
+Type=forking
+User={{ nifi_user }}
+ExecStart=/opt/nifi/bin/nifi.sh start
+ExecStop=/opt/nifi/bin/nifi.sh stop
+Restart=on-failure
+LimitNOFILE=65536
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

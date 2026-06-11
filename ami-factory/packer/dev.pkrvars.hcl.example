@@ -1,0 +1,13 @@
+# Copy to dev.pkrvars.hcl and edit. Do NOT commit real subnet/KMS ids if sensitive.
+region               = "us-east-1"
+instance_type        = "t3.large"
+ami_family           = "al2023-base"
+vpc_id               = ""            # "" = default VPC
+subnet_id            = ""
+kms_key_id           = ""            # e.g. "alias/dataapps-ebs"
+deprecate_after_days = 90
+iam_instance_profile = ""            # needed only if scripts pull from S3
+extra_tags = {
+  Environment = "shared"
+  Owner       = "cloud-team"
+}

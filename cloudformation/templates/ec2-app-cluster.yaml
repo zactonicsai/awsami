@@ -1,0 +1,176 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  DataApps EC2 app cluster (CloudFormation flavor of terraform/modules/ec2-app).
+  Launch Template + Auto Scaling Group with fixed size, golden AMI resolved
+  from the SSM pointer AT DEPLOY TIME via the parameter type — the console,
+  CLI and pipelines all pick up the same image as Terraform users.
+  Deploy: scripts\windows\cfn-deploy.bat dev kafka     (or)
+          aws cloudformation deploy --template-file templates/ec2-app-cluster.yaml
+            --stack-name dataapps-dev-kafka
+            --parameter-overrides file://parameters/dev-kafka.json
+            --capabilities CAPABILITY_NAMED_IAM
+
+Parameters:
+  EnvName:
+    Type: String
+    AllowedValues: [dev, test, prod]
+  AppName:
+    Type: String
+    Description: kafka | zookeeper | nifi | opensearch | postgres | <java-app-name>
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnets across AZs
+  AmiId:
+    # THE key trick: CFN resolves this SSM parameter to an AMI id at deploy time.
+    # Stack updates re-resolve it — run a no-op deploy to roll the pointer forward.
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: /dataapps/ami/al2023-base/latest
+  InstanceType:
+    Type: String
+    Default: m6i.large
+  NodeCount:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    MaxValue: 12
+  ClientCidr:
+    Type: String
+    Default: 10.0.0.0/8
+  AppPortFrom:
+    Type: Number
+    Default: 9092
+  AppPortTo:
+    Type: Number
+    Default: 9094
+  DataVolumeGb:
+    Type: Number
+    Default: 0
+    Description: 0 = root volume only; >0 adds encrypted gp3 /dev/xvdb
+  KeyName:
+    Type: String
+    Default: ""
+    Description: Optional EC2 key pair; empty = SSM-only access (recommended)
+
+Conditions:
+  HasDataVolume: !Not [!Equals [!Ref DataVolumeGb, 0]]
+  HasKeyName:    !Not [!Equals [!Ref KeyName, ""]]
+
+Resources:
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "App traffic for ${AppName} (${EnvName})"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: app clients
+          IpProtocol: tcp
+          FromPort: !Ref AppPortFrom
+          ToPort: !Ref AppPortTo
+          CidrIp: !Ref ClientCidr
+      Tags:
+        - { Key: Name, Value: !Sub "${AppName}-${EnvName}" }
+        - { Key: Project, Value: dataapps }
+
+  # Intra-cluster self-reference must be a separate resource (SG can't reference
+  # itself inline) — classic CFN gotcha.
+  IntraClusterIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AppSecurityGroup
+      SourceSecurityGroupId: !Ref AppSecurityGroup
+      IpProtocol: "-1"
+      Description: intra-cluster
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-${EnvName}-instance"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Tags:
+        - { Key: Project, Value: dataapps }
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${AppName}-${EnvName}-instance"
+      Roles: [!Ref InstanceRole]
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AppName}-${EnvName}"
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+        IamInstanceProfile: { Name: !Ref InstanceProfile }
+        SecurityGroupIds: [!Ref AppSecurityGroup]
+        MetadataOptions:
+          HttpTokens: required            # IMDSv2 only
+          HttpPutResponseHopLimit: 2
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs: { VolumeSize: 30, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
+          - !If
+            - HasDataVolume
+            - DeviceName: /dev/xvdb
+              Ebs: { VolumeSize: !Ref DataVolumeGb, VolumeType: gp3, Encrypted: true, DeleteOnTermination: false }
+            - !Ref "AWS::NoValue"
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - { Key: Name,        Value: !Sub "${AppName}-${EnvName}" }
+              - { Key: App,         Value: !Ref AppName }     # Ansible inventory group key
+              - { Key: Project,     Value: dataapps }
+              - { Key: Environment, Value: !Ref EnvName }
+              - { Key: ManagedBy,   Value: cloudformation }
+          - ResourceType: volume
+            Tags:
+              - { Key: Project,     Value: dataapps }
+              - { Key: Environment, Value: !Ref EnvName }
+
+  # Fixed-size ASG = self-healing N-node cluster. For apps needing STABLE node
+  # identities + persistent per-node volumes (Kafka/ZK quorum members), prefer
+  # the Terraform module's per-node map, or generate N AWS::EC2::Instance
+  # resources with Transform: AWS::LanguageExtensions + Fn::ForEach.
+  AppAsg:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: !Ref NodeCount   # surge: new node up before old down
+        MaxBatchSize: 1
+        PauseTime: PT5M
+    Properties:
+      AutoScalingGroupName: !Sub "${AppName}-${EnvName}"
+      VPCZoneIdentifier: !Ref SubnetIds
+      MinSize: !Ref NodeCount
+      MaxSize: !Ref NodeCount
+      DesiredCapacity: !Ref NodeCount
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 300
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      Tags:
+        - { Key: Name, Value: !Sub "${AppName}-${EnvName}", PropagateAtLaunch: true }
+
+Outputs:
+  SecurityGroupId:
+    Value: !Ref AppSecurityGroup
+    Export: { Name: !Sub "${AppName}-${EnvName}-sg" }
+  ResolvedAmiId:
+    Description: AMI the stack resolved from the SSM pointer at this deploy
+    Value: !Ref AmiId
+  AsgName:
+    Value: !Ref AppAsg

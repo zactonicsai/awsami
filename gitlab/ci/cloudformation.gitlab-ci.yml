@@ -1,0 +1,33 @@
+# =============================================================================
+# ci/cloudformation.gitlab-ci.yml — lint + guard always; deploy manual.
+# =============================================================================
+
+cfn:lint:
+  stage: lint
+  image: python:3.12-slim
+  script:
+    - pip install --quiet cfn-lint
+    - cfn-lint cloudformation/templates/*.yaml ami-factory/imagebuilder/*.yaml
+  rules:
+    - changes: [ "cloudformation/**/*", "ami-factory/imagebuilder/*" ]
+
+cfn:deploy:
+  extends: .aws_oidc
+  stage: deploy
+  image:
+    name: amazon/aws-cli:latest
+    entrypoint: [""]
+  variables:
+    ENVNAME: dev
+    APPNAME: kafka
+  script:
+    - >
+      aws cloudformation deploy
+      --stack-name "dataapps-${ENVNAME}-${APPNAME}"
+      --template-file cloudformation/templates/ec2-app-cluster.yaml
+      --parameter-overrides "file://cloudformation/parameters/${ENVNAME}-${APPNAME}.json"
+      --capabilities CAPABILITY_NAMED_IAM
+      --no-fail-on-empty-changeset
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
